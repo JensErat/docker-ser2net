@@ -54,6 +54,30 @@ In CI the `build` workflow runs this on every pull request and on `main`; the
 requests build and test only — no image is pushed. On `main` and `v*` tags the
 image is pushed after the tests pass.
 
+## Releases
+
+Releases are cut by the build itself; nothing is tagged by hand. A build becomes
+a release when any of these hold:
+
+- it was started manually (`workflow_dispatch`), or a `v*` tag was pushed;
+- the ser2net package version inside the image differs from the one in the
+  published `latest` — this is how a package-only update from the daily rebuild
+  gets a release;
+- the Debian base image digest differs from the digest recorded on the published
+  `latest` (label `org.jenserat.base-digest`, stamped at build time) — this is
+  how the daily rebuild picks up a new `bookworm-slim`;
+- the push to `main` touched anything outside `.github/`, `test/`, `README.md`
+  and `.gitignore`, i.e. the image inputs changed.
+
+So a Dependabot **base image** bump produces a release when it lands, while a
+Dependabot **GitHub Actions** bump does not.
+
+The release tag is the immutable image tag
+(`4.3.11-pkg.1.<build time>.<short sha>`), which is why several releases can
+exist for the same ser2net version even though published releases on this
+repository are immutable and their tags can never be reused. Release creation is
+skipped on pull requests, so it can never block a merge.
+
 CI builds and tests `ghcr.io/jenserat/ser2net` on every push to `main`, on `v*`
 tags, on pull requests, and on a daily schedule (see `.github/workflows/build.yml`).
 It authenticates with the workflow's built-in `GITHUB_TOKEN` (`packages: write`)

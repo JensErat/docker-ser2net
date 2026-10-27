@@ -18,10 +18,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: read
+      # Releases are created from the immutable image tag, so this needs to be
+      # able to create tags/releases. Pull request runs get a read-only token.
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Needed for the "did the image inputs change" diff on push events.
+          fetch-depth: 0
 
       - uses: docker/setup-buildx-action@v4
 
@@ -31,6 +36,44 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Runs before the build, because loading the new image re-tags :latest
+      # locally and would make the comparison below compare it with itself.
+      - name: Snapshot the currently published image
+        id: snapshot
+        if: github.event_name != 'pull_request'
+        env:
+          BASE_IMAGE: debian:bookworm-slim
+        run: |
+          set -euo pipefail
+
+          base_digest=$(docker buildx imagetools inspect "$BASE_IMAGE" \
+                          --format '{{.Manifest.Digest}}')
+          echo "Current base image digest: $base_digest"
+
+          prev_base_digest=""
+          prev_pkg_version=""
+          if docker pull ghcr.io/jenserat/ser2net:latest > /dev/null 2>&1; then
+            prev_base_digest=$(docker inspect -f \
+              '{{index .Config.Labels "org.jenserat.base-digest"}}' \
+              ghcr.io/jenserat/ser2net:latest 2>/dev/null || true)
+            case "$prev_base_digest" in
+              sha256:*) ;;
+              *) prev_base_digest="" ;;
+            esac
+            prev_pkg_version=$(docker run --rm --entrypoint dpkg-query \
+              ghcr.io/jenserat/ser2net:latest -W -f='${Version}' ser2net 2>/dev/null || true)
+            echo "Published base digest:      ${prev_base_digest:-<unlabelled>}"
+            echo "Published ser2net package:  ${prev_pkg_version:-<unknown>}"
+          else
+            echo "No published :latest yet; change detection is disabled."
+          fi
+
+          {
+            echo "base_digest=$base_digest"
+            echo "prev_base_digest=$prev_base_digest"
+            echo "prev_pkg_version=$prev_pkg_version"
+          } >> "$GITHUB_OUTPUT"
 
       - id: meta
         uses: docker/metadata-action@v6
@@ -51,10 +94,78 @@ jobs:
           load: true
           pull: true
           tags: ${{ steps.meta.outputs.tags }},ghcr.io/jenserat/ser2net:ci-test
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            org.jenserat.base-digest=${{ steps.snapshot.outputs.base_digest }}
 
       - name: Run e2e test
         run: python3 test/e2e.py ghcr.io/jenserat/ser2net:ci-test
+
+      - name: Resolve version and decide whether this build is a release
+        id: ver
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          BASE_DIGEST: ${{ steps.snapshot.outputs.base_digest }}
+          PREV_BASE_DIGEST: ${{ steps.snapshot.outputs.prev_base_digest }}
+          PREV_PKG_VERSION: ${{ steps.snapshot.outputs.prev_pkg_version }}
+        run: |
+          set -euo pipefail
+
+          IMAGE=ghcr.io/jenserat/ser2net:ci-test
+          PKG_VER=$(docker run --rm --entrypoint dpkg-query "$IMAGE" \
+                      -W -f='${Version}' ser2net 2>/dev/null \
+                    || docker run --rm "$IMAGE" \
+                      sh -c "dpkg-query -W -f='\${Version}' ser2net")
+          echo "Full package version: $PKG_VER"
+
+          PKG_VER_NO_EPOCH=$(echo "$PKG_VER" | sed -E 's/^[0-9]+://')
+          UPSTREAM=$(echo "$PKG_VER_NO_EPOCH" | sed -E 's/-[^-]+$//')
+          DEBREV=$(echo "$PKG_VER_NO_EPOCH" | sed -E 's/.*-//')
+          IMMUTABLE_TAG="${UPSTREAM}-pkg.${DEBREV}.$(date -u +%Y%m%dT%H%M%SZ).${SHA::7}"
+          echo "Immutable tag: $IMMUTABLE_TAG"
+
+          release=false
+          reason=""
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            release=true
+            reason="manual dispatch"
+          else
+            if [ "$EVENT" = "push" ] && [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
+              release=true
+              reason="release tag ${GITHUB_REF#refs/tags/} pushed"
+            fi
+            if [ -n "$PREV_PKG_VERSION" ] && [ "$PKG_VER" != "$PREV_PKG_VERSION" ]; then
+              release=true
+              reason="$reason; ser2net package ${PREV_PKG_VERSION} -> ${PKG_VER}"
+            fi
+            if [ -n "$PREV_BASE_DIGEST" ] && [ "$BASE_DIGEST" != "$PREV_BASE_DIGEST" ]; then
+              release=true
+              reason="$reason; base image ${PREV_BASE_DIGEST} -> ${BASE_DIGEST}"
+            fi
+            if [ "$EVENT" = "push" ] && [ -n "$BEFORE" ] \
+               && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+              # Anything outside CI, docs and tests changes the image itself.
+              files=$(git diff --name-only "$BEFORE" "$SHA" \
+                        | grep -Ev '^(\.github/|test/|README\.md$|\.gitignore$)' || true)
+              if [ -n "$files" ]; then
+                release=true
+                reason="$reason; image inputs changed: $(echo "$files" | tr '\n' ' ')"
+              fi
+            fi
+          fi
+          reason=${reason#; }
+          echo "Release: $release (${reason:-no image change detected})"
+
+          {
+            echo "pkg_version=$PKG_VER"
+            echo "upstream=$UPSTREAM"
+            echo "debrev=$DEBREV"
+            echo "immutable_tag=$IMMUTABLE_TAG"
+            echo "release=$release"
+            echo "reason=$reason"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Push tags
         if: github.event_name != 'pull_request'
@@ -65,28 +176,58 @@ jobs:
             docker push "$tag"
           done
 
-      - name: Extract ser2net version and push version tags
+      - name: Push version tags
         if: github.event_name != 'pull_request'
         env:
           IMAGE: ghcr.io/jenserat/ser2net@${{ steps.build.outputs.digest }}
-          SHORT_SHA: ${{ github.sha }}
+          UPSTREAM: ${{ steps.ver.outputs.upstream }}
+          IMMUTABLE_TAG: ${{ steps.ver.outputs.immutable_tag }}
         run: |
-          BUILD_DATE=$(date -u +%Y%m%dT%H%M%SZ)
-          SHORT_SHA=${SHORT_SHA::7}
-
+          set -euo pipefail
           docker pull "$IMAGE"
-          PKG_VER=$(docker run --rm --entrypoint dpkg-query "$IMAGE" -W -f='${Version}' ser2net 2>/dev/null || docker run --rm "$IMAGE" sh -c "dpkg-query -W -f='\${Version}' ser2net")
-          echo "Full package version: $PKG_VER"
-
-          PKG_VER_NO_EPOCH=$(echo "$PKG_VER" | sed -E 's/^[0-9]+://')
-          UPSTREAM=$(echo "$PKG_VER_NO_EPOCH" | sed -E 's/-[^-]+$//')
-          DEBREV=$(echo "$PKG_VER_NO_EPOCH" | sed -E 's/.*-//')
 
           echo "Pushing upstream version tag: $UPSTREAM"
           docker tag "$IMAGE" "ghcr.io/jenserat/ser2net:${UPSTREAM}"
           docker push "ghcr.io/jenserat/ser2net:${UPSTREAM}"
 
-          IMMUTABLE_TAG="${UPSTREAM}-pkg.${DEBREV}.${BUILD_DATE}.${SHORT_SHA}"
           echo "Pushing immutable tag: $IMMUTABLE_TAG"
           docker tag "$IMAGE" "ghcr.io/jenserat/ser2net:${IMMUTABLE_TAG}"
           docker push "ghcr.io/jenserat/ser2net:${IMMUTABLE_TAG}"
+
+      # The release tag is the immutable image tag: unique per build, so a
+      # second build of the same ser2net version still gets its own release
+      # even though published releases can never be modified or reused.
+      - name: Create release
+        if: github.event_name != 'pull_request' && steps.ver.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REL_TAG: ${{ steps.ver.outputs.immutable_tag }}
+          UPSTREAM: ${{ steps.ver.outputs.upstream }}
+          DEBREV: ${{ steps.ver.outputs.debrev }}
+          PKG_VERSION: ${{ steps.ver.outputs.pkg_version }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$REL_TAG" > /dev/null 2>&1; then
+            echo "Release $REL_TAG already exists; leaving it untouched."
+            exit 0
+          fi
+
+          {
+            echo "Container image for ser2net ${UPSTREAM} (Debian package \`${PKG_VERSION}\`)."
+            echo
+            echo "\`\`\`"
+            echo "docker pull ghcr.io/jenserat/ser2net:${REL_TAG}"
+            echo "\`\`\`"
+            echo
+            echo "- digest: \`${DIGEST}\`"
+            echo "- also tagged: \`${UPSTREAM}\`, \`latest\`, \`main\`"
+            echo "- commit: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+          } > /tmp/release-notes.md
+
+          gh release create "$REL_TAG" \
+            --target "$GITHUB_SHA" \
+            --latest \
+            --title "ser2net ${UPSTREAM} (pkg.${DEBREV})" \
+            --notes-file /tmp/release-notes.md
