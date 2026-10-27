@@ -29,10 +29,30 @@ would be lost.
 docker build -t ghcr.io/jenserat/ser2net .
 ```
 
-CI builds and pushes `ghcr.io/jenserat/ser2net` on every push to `main` and on
-`v*` tags (see `.github/workflows/build.yml`). It authenticates with the
-workflow's built-in `GITHUB_TOKEN` (`packages: write`), so there are **no
-repository secrets to configure**.
+## Test
+
+Run the end-to-end test locally (requires Docker with access to `/dev/ptmx`/PTYs):
+
+```sh
+docker build -t ghcr.io/jenserat/ser2net:ci-test .
+python3 test/e2e.py ghcr.io/jenserat/ser2net:ci-test
+```
+
+The test creates a PTY pair, mounts it into the container as `/dev/ttyS0`, starts
+`ser2net` with `test/ser2net.yaml`, verifies TCP↔serial byte round-trips, that the
+container runs as uid 1000, and that it exits cleanly on SIGTERM. It also checks
+that starting without a config fails quickly.
+
+In CI, the `build` workflow runs this test on every pull request and marks the
+`docker` job as the required status check on `main` (configure via a branch
+ruleset). On pull requests no images are pushed; on `main`/tags they are pushed
+after tests pass.
+
+CI builds and tests `ghcr.io/jenserat/ser2net` on every push to `main`, on `v*`
+tags, on pull requests, and on a daily schedule (see `.github/workflows/build.yml`).
+It authenticates with the workflow's built-in `GITHUB_TOKEN` (`packages: write`)
+for push/schedule runs, so there are **no repository secrets to configure**.
+On pull requests images are built and end-to-end tested but not pushed.
 
 The package is public, so the cluster pulls it anonymously — no image pull
 secret is needed.

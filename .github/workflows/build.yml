@@ -4,9 +4,14 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  pull_request:
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   docker:
@@ -20,6 +25,7 @@ jobs:
       - uses: docker/setup-buildx-action@v4
 
       - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -32,6 +38,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=tag
+            type=ref,event=pr
             type=raw,value=latest,enable={{is_default_branch}}
 
       - id: build
@@ -39,12 +46,26 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
-          push: true
+          push: false
+          load: true
           pull: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.meta.outputs.tags }},ghcr.io/jenserat/ser2net:ci-test
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Run e2e test
+        run: python3 test/e2e.py ghcr.io/jenserat/ser2net:ci-test
+
+      - name: Push tags
+        if: github.event_name != 'pull_request'
+        run: |
+          for tag in $(echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n'); do
+            [ -z "$tag" ] && continue
+            docker tag ghcr.io/jenserat/ser2net:ci-test "$tag"
+            docker push "$tag"
+          done
+
       - name: Extract ser2net version and push version tags
+        if: github.event_name != 'pull_request'
         env:
           IMAGE: ghcr.io/jenserat/ser2net@${{ steps.build.outputs.digest }}
           SHORT_SHA: ${{ github.sha }}

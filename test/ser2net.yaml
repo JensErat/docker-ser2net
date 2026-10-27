@@ -1,0 +1,5 @@
+connection: &con
+  accepter: tcp,3001
+  connector: serialdev,/dev/ttyS0,115200n81,local
+  options:
+    kickolduser: true
