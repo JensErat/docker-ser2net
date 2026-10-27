@@ -34,7 +34,6 @@ def main():
 
     master_fd, slave_fd = pty.openpty()
     slave_name = os.ttyname(slave_fd)
-    os.close(slave_fd)
     os.chmod(slave_name, 0o666)
     print(f"Using PTY slave: {slave_name}", flush=True)
 
