@@ -1,0 +1,29 @@
+version: 2
+updates:
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    reviewers:
+      - "JensErat"
+    assignees:
+      - "JensErat"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "base-image"
+    commit-message:
+      prefix: "docker"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    reviewers:
+      - "JensErat"
+    assignees:
+      - "JensErat"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "github-actions"
