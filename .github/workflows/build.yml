@@ -44,7 +44,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Extract ser2net version and push immutable tag
+      - name: Extract ser2net version and push version tags
         env:
           IMAGE: ghcr.io/jenserat/ser2net@${{ steps.build.outputs.digest }}
           SHORT_SHA: ${{ github.sha }}
@@ -59,6 +59,10 @@ jobs:
           PKG_VER_NO_EPOCH=$(echo "$PKG_VER" | sed -E 's/^[0-9]+://')
           UPSTREAM=$(echo "$PKG_VER_NO_EPOCH" | sed -E 's/-[^-]+$//')
           DEBREV=$(echo "$PKG_VER_NO_EPOCH" | sed -E 's/.*-//')
+
+          echo "Pushing upstream version tag: $UPSTREAM"
+          docker tag "$IMAGE" "ghcr.io/jenserat/ser2net:${UPSTREAM}"
+          docker push "ghcr.io/jenserat/ser2net:${UPSTREAM}"
 
           IMMUTABLE_TAG="${UPSTREAM}-pkg.${DEBREV}.${BUILD_DATE}.${SHORT_SHA}"
           echo "Pushing immutable tag: $IMMUTABLE_TAG"
