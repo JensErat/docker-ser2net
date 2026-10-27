@@ -58,3 +58,27 @@ that. The pinning and hardening live in the deployment manifests, not here.
   image's supplementary groups. If the pod ever runs without `privileged`, set
   `securityContext.supplementalGroups: [20]` on it (or use a device plugin).
 - ser2net logs to stdout with `-d`; there is no syslog daemon in the image.
+
+## The `Unable to start mdns: Out of memory` startup line
+
+The container logs this once per start and then runs normally. It is **not** an
+out-of-memory condition and is safe to ignore:
+
+- ser2net initializes its optional mDNS backend unconditionally at startup
+  (`gensio_alloc_mdns()` in `init_dataxfer()`), regardless of the config.
+- In a minimal container there is no avahi/dbus, so gensio's mDNS backend cannot
+  build its poll object and returns `GE_NOMEM`.
+- `GE_NOMEM` is gensio error code **1**, whose error string is literally
+  `"Out of memory"` — a generic allocation-failure label, not a measurement of
+  the container's memory.
+- The failure is non-fatal (`/* Not fatal */` in the source) and does not affect
+  raw TCP serving. The port's own mDNS is off anyway (`mdns` defaults to
+  `false`), so no service is advertised.
+
+Setting `mdns: false` in the config does **not** silence it: the init runs before
+per-port settings are applied. Raising the memory limit does not help either.
+The only way to remove the line is to build ser2net/gensio without mDNS support,
+which is not worth it for one cosmetic message. Observed with the Debian
+`bookworm` package (ser2net 4.3.11); it is a gensio behaviour, not
+distribution-specific.
+
