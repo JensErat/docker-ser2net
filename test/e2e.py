@@ -38,7 +38,10 @@ def main():
     os.chmod(slave_name, 0o666)
     print(f"Using PTY slave: {slave_name}", flush=True)
 
-    run(["docker", "pull", IMAGE], check=False)
+    # Try to pull only if it doesn't exist locally
+    inspect = run(["docker", "image", "inspect", IMAGE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if inspect.returncode != 0:
+        run(["docker", "pull", IMAGE], check=False)
 
     proc = run([
         "docker", "run", "-d",
@@ -52,14 +55,15 @@ def main():
         fail(f"docker run failed with {proc.returncode}")
 
     # Wait for port to be ready
-    for i in range(60):
+    for i in range(90):
         try:
             s = socket.create_connection(("127.0.0.1", HOST_PORT), timeout=1)
             s.close()
             break
         except Exception:
             time.sleep(0.5)
-            if run(["docker", "inspect", "-f", "{{.State.Running}}", CONTAINER_NAME], stdout=subprocess.PIPE).stdout.strip() == b"false":
+            running = run(["docker", "inspect", "-f", "{{.State.Running}}", CONTAINER_NAME], stdout=subprocess.PIPE).stdout.strip()
+            if running == b"false":
                 fail("container exited before accepting connections")
     else:
         fail("port not ready after timeout")
