@@ -1,5 +1,8 @@
+# Fixture config for test/e2e.py. The harness replaces __SERIAL_DEVICE__ with
+# the PTY slave it creates, then mounts the rendered file into the container.
+# Not a ready-to-run example — see the README for that.
 connection: &con
   accepter: tcp,3001
-  connector: serialdev,/dev/ttyS0,115200n81,local
+  connector: serialdev,__SERIAL_DEVICE__,115200n81,local
   options:
     kickolduser: true

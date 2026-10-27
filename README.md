@@ -31,22 +31,28 @@ docker build -t ghcr.io/jenserat/ser2net .
 
 ## Test
 
-Run the end-to-end test locally (requires Docker with access to `/dev/ptmx`/PTYs):
+Run the end-to-end test locally (requires Docker):
 
 ```sh
 docker build -t ghcr.io/jenserat/ser2net:ci-test .
 python3 test/e2e.py ghcr.io/jenserat/ser2net:ci-test
 ```
 
-The test creates a PTY pair, mounts it into the container as `/dev/ttyS0`, starts
-`ser2net` with `test/ser2net.yaml`, verifies TCP↔serial byte round-trips, that the
-container runs as uid 1000, and that it exits cleanly on SIGTERM. It also checks
-that starting without a config fails quickly.
+The test creates a real PTY pair, hands the slave to the container as its serial
+device and drives the other end. It asserts that the TCP↔serial path carries
+data in both directions (including a 4 KiB payload), that the container runs as
+uid 1000, that it survives a client disconnect, that it stops on SIGTERM rather
+than having to be SIGKILLed, and that starting without a config fails fast
+instead of idling. The container is run with `--privileged -v /dev:/dev` — the
+same way the Deployment exposes a real `/dev/ttyUSB*` — because `--device` with a
+single `/dev/pts` node does not survive the container's separate devpts mount.
+`test/ser2net.yaml` is a template; the harness substitutes the PTY path and
+mounts the rendered file.
 
-In CI, the `build` workflow runs this test on every pull request and marks the
-`docker` job as the required status check on `main` (configure via a branch
-ruleset). On pull requests no images are pushed; on `main`/tags they are pushed
-after tests pass.
+In CI the `build` workflow runs this on every pull request and on `main`; the
+`docker` job is the required status check on `main` (branch ruleset). Pull
+requests build and test only — no image is pushed. On `main` and `v*` tags the
+image is pushed after the tests pass.
 
 CI builds and tests `ghcr.io/jenserat/ser2net` on every push to `main`, on `v*`
 tags, on pull requests, and on a daily schedule (see `.github/workflows/build.yml`).
