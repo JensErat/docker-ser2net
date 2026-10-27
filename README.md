@@ -41,12 +41,13 @@ python3 test/e2e.py ghcr.io/jenserat/ser2net:ci-test
 The test creates a real PTY pair, hands the slave to the container as its serial
 device and drives the other end. It asserts that the TCP↔serial path carries
 data in both directions (including a 4 KiB payload), that the container runs as
-uid 1000, that it exits cleanly on SIGTERM, and that starting without a config
-fails fast instead of idling. The container is run with `--privileged -v
-/dev:/dev` — the same way the Deployment exposes a real `/dev/ttyUSB*` — because
-`--device` with a single `/dev/pts` node does not survive the container's
-separate devpts mount. `test/ser2net.yaml` is a template; the harness substitutes
-the PTY path and mounts the rendered file.
+uid 1000, that it survives a client disconnect, that it stops on SIGTERM rather
+than having to be SIGKILLed, and that starting without a config fails fast
+instead of idling. The container is run with `--privileged -v /dev:/dev` — the
+same way the Deployment exposes a real `/dev/ttyUSB*` — because `--device` with a
+single `/dev/pts` node does not survive the container's separate devpts mount.
+`test/ser2net.yaml` is a template; the harness substitutes the PTY path and
+mounts the rendered file.
 
 In CI the `build` workflow runs this on every pull request and on `main`; the
 `docker` job is the required status check on `main` (branch ruleset). Pull

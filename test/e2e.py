@@ -160,6 +160,7 @@ def main():
     got = read_fd(master_fd, payload)
     if payload not in got:
         fail(f"TCP->serial: sent {payload!r}, saw {got!r}")
+    print("ok: TCP -> serial", flush=True)
 
     # 4. serial -> TCP.
     payload = b"serial-to-tcp\n"
@@ -167,6 +168,7 @@ def main():
     got = read_sock(sock, payload)
     if payload not in got:
         fail(f"serial->TCP: sent {payload!r}, saw {got!r}")
+    print("ok: serial -> TCP", flush=True)
 
     # 5. Larger payload survives without truncation (buffer/partial-write issues).
     big = bytes((i % 89) + 32 for i in range(4096))
@@ -174,12 +176,14 @@ def main():
     got = read_fd(master_fd, big, timeout=20)
     if big not in got:
         fail(f"TCP->serial bulk: sent {len(big)} bytes, saw {len(got)}")
+    print("ok: TCP -> serial, 4 KiB", flush=True)
 
     big = bytes(((i * 7) % 89) + 32 for i in range(4096))
     os.write(master_fd, big)
     got = read_sock(sock, big, timeout=20)
     if big not in got:
         fail(f"serial->TCP bulk: sent {len(big)} bytes, saw {len(got)}")
+    print("ok: serial -> TCP, 4 KiB", flush=True)
 
     sock.close()
 
