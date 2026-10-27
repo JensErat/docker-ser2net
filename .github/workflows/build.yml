@@ -60,7 +60,7 @@ jobs:
           UPSTREAM=$(echo "$PKG_VER_NO_EPOCH" | sed -E 's/-[^-]+$//')
           DEBREV=$(echo "$PKG_VER_NO_EPOCH" | sed -E 's/.*-//')
 
-          IMMUTABLE_TAG="${UPSTREAM}+pkg.${DEBREV}.${BUILD_DATE}.${SHORT_SHA}"
+          IMMUTABLE_TAG="${UPSTREAM}-pkg.${DEBREV}.${BUILD_DATE}.${SHORT_SHA}"
           echo "Pushing immutable tag: $IMMUTABLE_TAG"
           docker tag "$IMAGE" "ghcr.io/jenserat/ser2net:${IMMUTABLE_TAG}"
           docker push "ghcr.io/jenserat/ser2net:${IMMUTABLE_TAG}"
